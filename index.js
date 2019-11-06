@@ -18,15 +18,31 @@ class ModelBaseClass {
     return model.set(data).save()
   }
 
-  static _read (_id, expand) {
-    if (!_.isString(_id) || !/^[a-f\d]{24}$/i.test(_id)) return {}
+  static _read (_id, options) {
+    let select = _.get(options, 'select', '')
+    let expand = _.get(options, 'expand', '')
+
+    let filter = {}
+
+    if (_.isString(_id)) {
+      if (!/^[a-f\d]{24}$/i.test(_id)) return {}
+      filter = { _id }
+    } else {
+      if (!_.isPlainObject(_id)) return {}
+      else filter = _id
+    }
     
-    let query = this.findOne({ _id })
+    let query = this.findOne(filter)
+
+    if (select) query.select(select)
     if (expand) query.populate(this.mapPopulates(expand))
+
     return query.exec()
   }
 
-  static _update (_id, update) {
+  static _update (_id, update, options ) {
+    let expand = _.get(options, 'expand', '')
+    let soft = _.get(options, 'soft', false)
     let query = this.findOne({ _id })
 
     // first  query to capture modified paths
@@ -37,21 +53,58 @@ class ModelBaseClass {
 
         let oldDoc = _.cloneDeep(doc)
 
-        _.each(Object.keys(update), key => {
-          doc[key] = update[key]
-        })
+        if (typeof soft === 'boolean') {
+          if (soft) { // soft array update (append new items to existing array)
+            _.each(Object.keys(update), key => {
+              if (Array.isArray(doc[key])) {
+                doc[key] = Array.from(new Set([...doc[key], ...update[key]]))
+              } else {
+                doc[key] = update[key]
+              }
+            })
+          } else { // hard array update (overwrite array values with new ones)
+            _.each(Object.keys(update), key => {
+              doc[key] = update[key]
+            })
+          }
+        } else if (typeof soft === 'object') {
+          // mixed! some fields are soft some are not
+          _.each(Object.keys(update), key => {
+            if (Array.isArray(update[key]) && soft[key]) {
+              doc[key] = Array.from(new Set([...doc[key], ...update[key]]))
+            } else {
+              doc[key] = update[key]
+            }
+          })
+        }
         
         let changeLog = {}
         let modifieds = doc.modifiedPaths()
+
+        let comparator = function (a, b) {
+          return typeof a === 'object'
+            ? !_.isEqual(a, b)
+            : a !== b
+        }
 
         return doc.save().then(updDoc => {
           updDoc = updDoc.toObject()
 
           if (modifieds.length) {
             _.each(modifieds, field => {
-              changeLog[field] = {
-                from: oldDoc[field],
-                to: updDoc[field]
+              let updd = updDoc[field]
+              let oldd = oldDoc[field]
+
+              if (Array.isArray(updd) && updd.length && !_.isPlainObject(updd[0])) {
+                changeLog[field] = {
+                  added: updd.filter(a => oldd.every(b => comparator(a, b))),
+                  removed: oldd.filter(b => updd.every(a => comparator(b, a)))
+                }
+              } else {
+                changeLog[field] = {
+                  from: oldd,
+                  to: updd
+                }
               }
             })
 
