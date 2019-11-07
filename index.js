@@ -3,14 +3,14 @@
 const _ = require('lodash')
 
 class ModelBaseClass {
-  static _init (cacher) {
-    this.resource = this.collection.name
-    this.cacher = cacher
-
+  static _init (options) {
     this._skip = 0
     this._page = 1
     this._limit = 50
     this._cache = false
+
+    this.cacher = options.cacher
+    this.resource = this.collection.name
   }
 
   static _create (data, options) {
@@ -18,19 +18,9 @@ class ModelBaseClass {
     return model.set(data).save()
   }
 
-  static _read (_id, options) {
+  static _read (filter, options) {
     let select = _.get(options, 'select', '')
     let expand = _.get(options, 'expand', '')
-
-    let filter = {}
-
-    if (_.isString(_id)) {
-      if (!/^[a-f\d]{24}$/i.test(_id)) return {}
-      filter = { _id }
-    } else {
-      if (!_.isPlainObject(_id)) return {}
-      else filter = _id
-    }
     
     let query = this.findOne(filter)
 
@@ -40,10 +30,12 @@ class ModelBaseClass {
     return query.exec()
   }
 
-  static _update (_id, update, options ) {
+  static _update (filter, options ) {
     let expand = _.get(options, 'expand', '')
+    let update = _.get(options, 'data', {})
     let soft = _.get(options, 'soft', false)
-    let query = this.findOne({ _id })
+
+    let query = this.findOne(filter)
 
     // first  query to capture modified paths
     return query
@@ -77,7 +69,7 @@ class ModelBaseClass {
             }
           })
         }
-        
+
         let changeLog = {}
         let modifieds = doc.modifiedPaths()
 
@@ -117,8 +109,8 @@ class ModelBaseClass {
       })
   }
 
-  static _delete (_id) {
-    return this.findOne({ _id })
+  static _delete (filter) {
+    return this.findOne(filter)
       .exec()
       .then(doc => {
         if (!doc) return doc
